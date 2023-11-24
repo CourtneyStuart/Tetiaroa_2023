@@ -24,7 +24,6 @@ ras_wd = "E:/Data/Tetiaroa/Courtney_Stuart/Tetiaroa_2023/Rasters/"
 library(easypackages)
 libraries("raster", "terra", "MultiscaleDTM", "sp", "sf", 
           "conflicted", "spatialEco", "dplyr")
-conflict_prefer("terrain", "terra")
 
 #### PROCESSING ####
 # save PROJ.4 string for Teti'aroa projection
@@ -40,6 +39,21 @@ topobathyspat = rast(topobathy) # convert to SpatRaster for processing/storing
 writeRaster(topobathy,
             paste0(ras_wd, "TopoBathy.tif"),
             overwrite = T)
+
+# first use the topobathy data to define land vs. water
+# reclassify the raster where all values <0m  are underwater and >0m above water (land)
+reclass_rules = c(minValue(topobathy), 0, 0,
+                  0, maxValue(topobathy), 1)
+landsea = reclassify(topobathy, reclass_rules)
+
+# calculate a new raster where cell values store the distance from each cell to land
+land_dist = gridDist(x = rast(landsea),
+                     target = 1)
+writeRaster(land_dist, 
+            paste0(ras_wd, "LandDist.tif"),
+            overwrite = T)
+
+# remove the RasterLayer, keep only SpatRaster for storage
 rm(topobathy)
 
 # derive topographic-bathymetric measures - all calculated using a quadratic 
