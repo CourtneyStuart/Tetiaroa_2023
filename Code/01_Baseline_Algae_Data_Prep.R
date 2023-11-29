@@ -14,6 +14,8 @@ ras_wd = "E:/Data/Tetiaroa/Courtney_Stuart/Tetiaroa_2023/Rasters/"
 alg_wd = "E:/Data/Tetiaroa/Courtney_Stuart/Tetiaroa_2023/Source_Data/Algae_Baseline_Data/"
 # github project where all processed data will be saved to 
 git_wd = "E:/Data/Tetiaroa/Courtney_Stuart/Tetiaroa_2023/GitHub/Tetiaroa_2023/Data/"
+# temporary files
+temp_wd = "E:/Data/Tetiaroa/Courtney_Stuart/Tetiaroa_2023/Temp/"
 
 #### LIBRARIES ####
 library(easypackages)
@@ -42,9 +44,9 @@ hab_cod_df = habitat %>%
   st_drop_geometry() %>%
   select(Habitat, Hab_Cod) %>%
   unique()
-write.csv(hab_cod_df,
-          paste0(hab_wd, "Habitat_Class_Raster_Codes.csv"), 
-          row.names = F)
+#write.csv(hab_cod_df,
+#         paste0(hab_wd, "Habitat_Class_Raster_Codes.csv"), 
+#        row.names = F)
 
 # use the topobathy raster as a guide to define our spatial extent, but use the 
 # recommended 2m by 2m spatial resolution
@@ -54,7 +56,7 @@ guide = raster(ext = extent(topobathy),
                crs = my_crs)
 rm(topobathy)
 
-# rasterize the habitat data
+# rasterize the habitat data and export the new 2m by 2m habitat raster
 habitat_ras = writeRaster((
   fasterize(sf = habitat,
             raster = guide,
@@ -82,27 +84,43 @@ landdist = raster(paste0(ras_wd, "LandDist.tif"))
 # information relative to the 2m by 2m raster, but will enable us to add the habitat
 # raster to a raster stack with the other predictors. we can then use the stack to
 # easily extract the value of all predictors at our algae sampling points using one 
-# line of code.
+# line of code. save the resampled raster to our folder of temporary files.
 habitat = resample(x = habitat_ras,
                    y = topobathy,
                    method = "ngb")
+#writeRaster(habitat, paste0(temp_wd, "Habitat_Resampled_30cm.tif"))
 
 # create a raster stack with all desired predictors
 env = stack(x = c(habitat, topobathy, slope, aspect, eastness, northness, planc,
                   profc, meanc, sapa, landdist))
 
-# read in the baseline algae data collected in 2021
-algae = read.csv(paste0(alg_wd, "Tetiaroa_Turbinaria_ATA_November_2021_compiledMarch2023.csv"))
+# read in the baseline algae data collected for the ATA project in 2021
+algaeATA = read.csv(paste0(alg_wd, "Tetiaroa_Turbinaria_ATA_November_2021_compiledMarch2023.csv"))
 
 # get rid of any rows with missing (NA) N15 values and remove the extra columns that R
 # added on to the end of our dataframe (the last column in the csv is 'Triplicate_C')
-algae = algae %>%
+algaeATA = algaeATA %>%
   filter(!is.na(N15)) %>%
   select(1:23)
 
+# read in the baseline algae data collected on transects in 2021 
+# get rid of any rows with missing (NA) N15 values and remove any extra columns
+algaeTRAN = read.csv(paste0(alg_wd, "Tetiaroa_Turbinaria_Transects_November_2021_compiledMarch2023.csv"))
+algaeTRAN = algaeTRAN %>%
+  filter(!is.na(N15))
+
+# combine the ATA and transect datasets into a single dataframe using shared columns
+algae = rbind(
+  select(algaeATA, Date_collected, Month, Year, Motu, Purpose,
+         Collected_by, GPS_name, Longitude, Latitude, vial, N15,
+         C13, N_percent, C_percent, Notes), 
+  select(algaeTRAN, Date_collected, Month, Year, Motu, Purpose,
+         Collected_by, GPS_name, Longitude, Latitude, vial, N15, 
+         C13, N_percent, C_percent, Notes))
+
 # convert to spatial data using lat and long columns and re-project from GCS WGS 1984
-# to our desired WGS 1984 UTM Zone 6S (EPSG WKID 32706)
-gcs = CRS("+init=epsg:4326") # define GCS WGS 1984 projection (decimal degrees) 
+# (decimal degrees) to our desired WGS 1984 UTM Zone 6S (EPSG WKID 32706)
+gcs = CRS("+init=epsg:4326")
 # convert to spatial data
 algae = st_as_sf(algae,
                  coords = c("Longitude", "Latitude"), 
@@ -129,6 +147,15 @@ algae_data = algae_data %>%
 algae_data = left_join(algae_data, hab_cod_df, c("Habitat_2m" = "Hab_Cod")) %>%
   relocate(Habitat, .after = Habitat_2m) # place it after the habitat integer column
 
+# add a column that stores the level of "ratty-ness" on each motu based on Russell
+# et al. 2011 'Rat invasion of Tetiaroa atoll, French Polynesia'
+Motu = c("Onetahi", "Honuea", "Tiaraunu", "Tiaraunu Hoa", 
+         "Hiranae", "Oroatera", "Aie", "Reiono", "Rimatuu", "Auroa")
+Rats = c(2, 2, 2, 2, 2, 2, 1, 1, 1, 2)
+ratty = data.frame(Motu, Rats)
+algae_data = left_join(algae_data, ratty) %>%
+  relocate(Rats, .after = Motu) 
+
 # save the longitude and latitude information to new columns, place these before the 
 # GPS_name column
 algae_data_csv = algae_data %>%
@@ -139,6 +166,9 @@ algae_data_csv = algae_data %>%
   st_drop_geometry()
 
 # save the cleaned and prepped algae-environment data as a csv and push to github
-write.csv(algae_data_csv,
-          paste0(git_wd, "Prepped_Tetiaroa_Turbinaria_ATA_2021_Data.csv"),
+write.csv(algae_data_csv, 
+          paste0(alg_wd, "Testing.csv"),
           row.names = FALSE)
+#write.csv(algae_data_csv,
+#         paste0(git_wd, "Prepped_Tetiaroa_Turbinaria_2021_Data.csv"),
+#        row.names = FALSE)
