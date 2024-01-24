@@ -35,15 +35,16 @@ topobathy = raster(paste0(bathy_wd, "tetiaroa_dtm_30cm_2017_1.tif"))
 compareCRS(topobathy, my_crs) # check projection
 res(topobathy) # check resolution, which should be 30cm by 30cm
 topobathyspat = rast(topobathy) # convert to SpatRaster for processing/storing
-# export topobathy raster to desired folder and remove from environment to save space
+# export topobathy raster to desired folder 
 writeRaster(topobathy,
             paste0(ras_wd, "TopoBathy.tif"),
             overwrite = T)
 
 # first use the topobathy data to define land vs. water
-# reclassify the raster where all values <0m  are underwater and >0m above water (land)
-reclass_rules = c(minValue(topobathy), 0, 0,
-                  0, maxValue(topobathy), 1)
+# reclassify the raster where all values <0.5m  are underwater and >0.5m above water (land)
+# 0.5 is based on the mean tidal range in Tetiaroa according to Jeanson et al. 2014 (https://doi.org/10.2112/SI70-030.1)
+reclass_rules = c(minValue(topobathy), 0.5, 0,
+                  0.5, maxValue(topobathy), 1)
 landsea = reclassify(topobathy, reclass_rules)
 
 # calculate a new raster where cell values store the distance from each cell to land
@@ -159,6 +160,8 @@ gc()
 
 #### OPTIONAL ####
 # read back in all rasters and check CRS
+#topobathy = raster(paste0(ras_wd, "TopoBathy.tif")) 
+#landdist = raster(paste0(ras_wd, "LandDist.tif")) 
 #slope = raster(paste0(ras_wd, "QSlope.tif")) 
 #aspect = raster(paste0(ras_wd, "QAspect.tif"))
 #eastness = raster(paste0(ras_wd, "QEastness.tif"))
@@ -167,6 +170,8 @@ gc()
 #planc = raster(paste0(ras_wd, "QPlanCurve.tif"))
 #meanc = raster(paste0(ras_wd, "QMeanCurve.tif"))
 #sapa = raster(paste0(ras_wd, "SAPARugosity.tif"))
+#compareCRS(topobathy, my_crs)
+#compareCRS(landdist, my_crs)
 #compareCRS(slope, my_crs)
 #compareCRS(aspect, my_crs)
 #compareCRS(eastness, my_crs)
