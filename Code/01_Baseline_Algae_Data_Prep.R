@@ -12,6 +12,8 @@ hab_wd = "E:/Data/Tetiaroa/Courtney_Stuart/Tetiaroa_2023/Source_Data/Habitat/"
 ras_wd = "E:/Data/Tetiaroa/Courtney_Stuart/Tetiaroa_2023/Rasters/"
 # baseline algae nutrient data from Oregon State, Oxford, Lancaster, Tetiaroa Society collaboration
 alg_wd = "E:/Data/Tetiaroa/Courtney_Stuart/Tetiaroa_2023/Source_Data/Algae_Baseline_Data/"
+# baseline seabird biomass and nutrient input data from the Tetiaroa Sociey
+bird_wd = "E:/Data/Tetiaroa/Courtney_Stuart/Tetiaroa_2023/Source_Data/Seabird_Baseline_Data/"
 # github project where all processed data will be saved to 
 git_wd = "E:/Data/Tetiaroa/Courtney_Stuart/Tetiaroa_2023/GitHub/Tetiaroa_2023/Data/"
 # temporary files
@@ -89,6 +91,7 @@ habitat = resample(x = habitat_ras,
                    y = topobathy,
                    method = "ngb")
 #writeRaster(habitat, paste0(temp_wd, "Habitat_Resampled_30cm.tif"))
+#habitat = raster(paste0(temp_wd, "Habitat_Resampled_30cm.tif"))
 
 # create a raster stack with all desired predictors
 env = stack(x = c(habitat, topobathy, slope, aspect, eastness, northness, planc,
@@ -118,6 +121,26 @@ algae = rbind(
          Collected_by, GPS_name, Longitude, Latitude, vial, N15, 
          C13, N_percent, C_percent, Notes))
 
+# read in the baseline seabird survey data from 2021. This stores motu-level estimates
+# of the total density and biomass of breeding seabirds.Nutrient input scales with body
+# mass, so we can use these data as a proxy for nutrient delivery to each motu.
+bird = read.csv(paste0(bird_wd, "seabird_biomass_by_motu_draft.csv"))
+
+# we want to combine dataframes based on motu names, make sure they match up
+unique(bird$Motu)
+unique(algae$Motu)
+
+# correct the algae records for Hiraanae (correct spelling) and Tauini (the local name for 
+# Tiaraunu's Hoa)
+algae$Motu = ifelse(algae$Motu == "Hiranae", "Hiraanae", algae$Motu)
+algae$Motu = ifelse(algae$Motu == "Tiaraunu Hoa", "Tauini", algae$Motu)
+
+# add the seabird density and biomass data to our algae dataframe
+algae = left_join(algae,
+                  select(bird, -X),
+                  by = "Motu")
+summary(algae)
+
 # convert to spatial data using lat and long columns and re-project from GCS WGS 1984
 # (decimal degrees) to our desired WGS 1984 UTM Zone 6S (EPSG WKID 32706)
 gcs = CRS("+init=epsg:4326")
@@ -133,7 +156,10 @@ algae_data = cbind(algae, raster::extract(env, algae))
 
 # some quick renaming
 algae_data = algae_data %>%
-  rename(Slope = qslope,
+  rename(BirdBiomass = breeding_biomass_kgha_motu,
+         BirdDensity = breeding_density_ha_motu,
+         Depth = TopoBathy,
+         Slope = qslope,
          Aspect = qaspect,
          Eastness = qeastness,
          Northness = qnorthness,
@@ -144,21 +170,32 @@ algae_data = algae_data %>%
          LandDistance = tetiaroa_dtm_30cm_2017_1) # distance to land raster
 
 # add a column with the habitat class names, using the integer codes saved above
-algae_data = left_join(algae_data, hab_cod_df, c("Habitat_2m" = "Hab_Cod")) %>%
-  relocate(Habitat, .after = Habitat_2m) # place it after the habitat integer column
+#hab_cod_df = read.csv(paste0(hab_wd, "Habitat_Class_Raster_Codes.csv"))
+algae_data = left_join(algae_data, hab_cod_df, c("Habitat_Resampled_30cm" = "Hab_Cod")) %>%
+  relocate(Habitat, .after = Habitat_Resampled_30cm) # place it after the habitat integer column
 
-# add a column that stores the level of "ratty-ness" on each motu based on Russell
-# et al. 2011 'Rat invasion of Tetiaroa atoll, French Polynesia'
-Motu = c("Onetahi", "Honuea", "Tiaraunu", "Tiaraunu Hoa", 
-         "Hiranae", "Oroatera", "Aie", "Reiono", "Rimatuu", "Auroa")
-Rats = c(2, 2, 2, 2, 2, 2, 1, 1, 1, 2)
-ratty = data.frame(Motu, Rats)
-algae_data = left_join(algae_data, ratty) %>%
-  relocate(Rats, .after = Motu) 
+# remove rows where depth values are positive (above 0m)...although algae were clearly collected here and these
+# sites may be right along the beach line, I don't want to confuse the model by providing both elevations and depths.
+# This will only remove 4 records, which is negligible in this case.
+algae_data = algae_data %>%
+  filter(Depth <= 0)
+
+# do any of the algae collection sites say they're in terrestrial vegetation? 
+unique(algae_data$Habitat)
+
+# GPS record 65 (Rimatuu) shows up as terrestrial, but our original habitat and remote sensing
+# daat show that it's actually submerged rock. This issue is probably an articfact of the 
+# rasterization process and can be confidently overwritten as rock. 
+algae_data$Habitat = ifelse(algae_data$Habitat == "Terrestrial vegetation", "Rock", 
+                            algae_data$Habitat)
+unique(algae_data$Habitat) # done
+
+# There are also a few typos in the month of collection column that we can fix
+algae_data$Month = ifelse(grepl("Dec", algae_data$Date_collected), "Dec", algae_data$Month)
 
 # save the longitude and latitude information to new columns, place these before the 
 # GPS_name column
-algae_data_csv = algae_data %>%
+prepped_algae = algae_data %>%
   mutate(LongUTM6S = sf::st_coordinates(.)[,1],
          LatUTM6S = sf::st_coordinates(.)[,2]) %>%
   relocate(LatUTM6S, .before = GPS_name) %>%
@@ -166,9 +203,9 @@ algae_data_csv = algae_data %>%
   st_drop_geometry()
 
 # save the cleaned and prepped algae-environment data as a csv and push to github
-write.csv(algae_data_csv, 
-          paste0(alg_wd, "Testing.csv"),
+write.csv(prepped_algae, 
+          paste0(alg_wd, "Cleaned_Tetiaroa_Turbinaria_2021_Data.csv"),
           row.names = FALSE)
 #write.csv(algae_data_csv,
-#         paste0(git_wd, "Prepped_Tetiaroa_Turbinaria_2021_Data.csv"),
+#         paste0(git_wd, "Cleaned_Tetiaroa_Turbinaria_2021_Data.csv"),
 #        row.names = FALSE)
